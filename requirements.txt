@@ -1,0 +1,8 @@
+google-generativeai
+numpy
+scikit-learn
+PyMuPDF
+crewai
+crewai-tools
+python-dotenv
+
