@@ -108,4 +108,4 @@ Contributions are welcome! If you have suggestions for improvements or new featu
 
 ## License
 
-This project is open-source. Please refer to the `LICENSE` file if one is added to the repository. (Currently, no license file is specified).
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
