@@ -1,3 +1,13 @@
+<div align="center">
+<pre>
+L       U   U  M   M  EEEEE  N   N
+L       U   U  MM MM  E      NN  N
+L       U   U  M M M  EEE    N N N
+L       U   U  M   M  E      N  NN
+LLLLL   UUUUU  M   M  EEEEE  N   N
+</pre>
+</div>
+
 # AI-Powered Content Generation for Books
 
 ## Overview
