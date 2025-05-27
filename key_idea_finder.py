@@ -1,19 +1,21 @@
 import os
 import google.generativeai as genai
+from config import EMBEDDING_MODEL, GEMINI_TEXT_MODEL # Import from config
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import euclidean_distances, cosine_similarity
 import time
 import warnings
-import fitz  # PyMuPDF
+import fitz  # PyMuPDF # fitz will be used by utils.read_file_content
 import math # Import math for checking nan
+import argparse # For command-line arguments
+from utils import read_file_content, chunk_text_by_paragraph # Import the new utility functions
 
 # --- Configuration ---
-EMBEDDING_MODEL_NAME = "models/text-embedding-004"
-# Gemini 1.5 Flash is good for summarization tasks - check Google AI docs for latest stable name
-SUMMARIZATION_MODEL_NAME = "models/gemini-2.0-flash"
+# EMBEDDING_MODEL_NAME is now imported from config as EMBEDDING_MODEL
+# SUMMARIZATION_MODEL_NAME is now imported from config as GEMINI_TEXT_MODEL (for summarization)
 NUM_CLUSTERS = 7 # Adjust as needed (desired number of key ideas)
-MIN_CHUNK_LENGTH = 400
+# MIN_CHUNK_LENGTH is now defined in utils.py as DEFAULT_MIN_CHUNK_LENGTH for the chunking function
 # Number of closest chunks to the centroid to use for summarization
 NUM_CLOSEST_CHUNKS_TO_SUMMARIZE = 7
 # Maximum combined length of chunks to send for summarization (to avoid hitting token limits)
@@ -21,100 +23,15 @@ MAX_SUMMARY_INPUT_LENGTH = 50000 # Adjust based on model limits and typical chun
 
 # --- Helper Functions ---
 
-def read_book(filepath):
-    """Reads text content from a PDF or plain text file."""
-    if not os.path.exists(filepath):
-        print(f"Error: File not found at {filepath}")
-        return None
-
-    # Handle PDF file using PyMuPDF (fitz)
-    if filepath.lower().endswith('.pdf'):
-        try:
-            print(f"Attempting to extract text from PDF: {filepath}")
-            doc = fitz.open(filepath)
-            full_text = ""
-            num_pages = doc.page_count
-            print(f"PDF has {num_pages} pages.")
-            for i, page in enumerate(doc):
-                # Use 'text' for standard text extraction
-                # 'html', 'xml', 'json', 'text' are options
-                text = page.get_text("text")
-                if text:
-                    full_text += text + "\n"
-            doc.close()
-            if not full_text.strip():
-                 print("Warning: No text could be extracted from the PDF.")
-                 return None
-            print(f"Successfully extracted text from PDF.")
-            return full_text
-        except fitz.fitz.PasswordError:
-             print(f"Error: The PDF file '{filepath}' is password-protected.")
-             return None
-        except Exception as e:
-            print(f"Error extracting text from PDF '{filepath}': {e}")
-            return None
-    # Handle Plain Text File
-    else:
-        try:
-            print(f"Reading plain text file: {filepath}")
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            try:
-                print(f"UTF-8 decoding failed ({e}), trying latin-1 encoding...")
-                with open(filepath, 'r', encoding='latin-1') as f:
-                    return f.read()
-            except Exception as e2:
-                 print(f"Error reading plain text file with UTF-8 and latin-1: {e2}")
-                 return None
-
-def chunk_text_by_paragraph(text, min_length=MIN_CHUNK_LENGTH):
-    """Chunks the text by paragraphs and filters short chunks."""
-    # Split by multiple newlines (more likely to be paragraphs)
-    paragraphs = text.split('\n\n')
-    # If very few paragraphs, try splitting by single newlines
-    if len(paragraphs) < 10 and len(text.split('\n')) > 20: # Heuristic: check if single newlines are more common
-        print("Few paragraphs found with '\\n\\n', trying single '\\n' splits.")
-        paragraphs = text.split('\n')
-    elif len(paragraphs) < 10:
-         print("Few paragraphs found even with single '\\n' splits or short text overall.")
-
-
-    chunks = [p.strip() for p in paragraphs if len(p.strip()) >= min_length]
-
-    # Fallback: if no chunks found, try splitting by sentences (less ideal but better than nothing)
-    if not chunks and len(text.strip()) >= min_length:
-         print(f"Warning: No text chunks found by paragraph splitting/filtering (min length {min_length}). Attempting sentence splitting.")
-         # Basic sentence splitting (can be improved)
-         import re
-         sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text.strip())
-         # Combine sentences until min_length is reached
-         current_chunk = ""
-         for sentence in sentences:
-             if len(current_chunk) + len(sentence) + 1 >= min_length:
-                 if current_chunk: # Only add if not empty
-                    chunks.append(current_chunk.strip())
-                 current_chunk = sentence + " "
-             else:
-                 current_chunk += sentence + " "
-         if current_chunk and len(current_chunk.strip()) >= min_length:
-              chunks.append(current_chunk.strip())
-         elif current_chunk and chunks: # Append remaining if it's not too short and we have other chunks
-              chunks[-1] += " " + current_chunk.strip() # Append to last chunk
-
-    if not chunks:
-        print(f"Warning: No valid text chunks found after splitting/filtering (min length {min_length}).")
-        return []
-
-    print(f"Chunked text into {len(chunks)} sections (min length {min_length}).")
-    return chunks
+# The read_book function has been moved to utils.py as read_file_content
+# The chunk_text_by_paragraph function has been moved to utils.py
 
 def get_embeddings(texts, model_name, api_key):
     """Generates embeddings using the Gemini API. Handles both single string and list of strings."""
     if not api_key:
         raise ValueError("API key not found. Set the GOOGLE_API_KEY environment variable.")
     genai.configure(api_key=api_key)
-    print(f"Using embedding model: {model_name}")
+    print(f"Using embedding model: {EMBEDDING_MODEL}") # Use imported constant
 
     is_single_text = isinstance(texts, str)
     texts_list = [texts] if is_single_text else texts
@@ -134,7 +51,7 @@ def get_embeddings(texts, model_name, api_key):
         for attempt in range(retries):
             try:
                 result = genai.embed_content(
-                    model=model_name,
+                    model=EMBEDDING_MODEL, # Use imported constant
                     content=batch_texts,
                     task_type="RETRIEVAL_DOCUMENT" # Or "SEMANTIC_SIMILARITY" or "AQA" depending on task
                 )
@@ -218,7 +135,7 @@ def generate_summaries_for_clusters(kmeans, embeddings, original_texts, api_key,
         print("Error: API key not provided for summarization.")
         return []
 
-    print(f"\nInitializing summarization model: {summarization_model_name}")
+    print(f"\nInitializing summarization model: {GEMINI_TEXT_MODEL}") # Use imported constant
     genai.configure(api_key=api_key)
     try:
         # Configure safety settings to be less restrictive if needed, otherwise defaults are used
@@ -228,7 +145,7 @@ def generate_summaries_for_clusters(kmeans, embeddings, original_texts, api_key,
         #     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         #     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         # ]
-        model = genai.GenerativeModel(summarization_model_name)#, safety_settings=safety_settings)
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)#, safety_settings=safety_settings) # Use imported constant
     except Exception as e:
         print(f"Error initializing generative model: {e}")
         return []
@@ -397,25 +314,79 @@ def rank_ideas_by_book_similarity(key_idea_summaries, book_embedding):
     print("Ranking complete.")
     return ranked_ideas
 
+def save_ranked_ideas_to_file(ranked_ideas, filepath):
+    """Saves the ranked key ideas to a file in Markdown format."""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write("# Ranked Key Ideas by Similarity to Whole Book\n")
+            f.write("========================================\n\n")
+            if ranked_ideas:
+                for rank, idea_info in enumerate(ranked_ideas):
+                    f.write(f"--- Rank {rank + 1} (Similarity: {idea_info['similarity']:.4f}) ---\n")
+                    f.write(f"{idea_info['summary']}\n")
+                    f.write("----------------------------------------\n\n")
+                print(f"Successfully saved ranked ideas to {filepath}")
+            else:
+                f.write("No ranked ideas to display (ranking failed or no summaries generated).\n")
+                print(f"No ranked ideas to save. Output file '{filepath}' created with this message.")
+    except IOError as e:
+        print(f"Error: Could not write to file {filepath}. Reason: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while saving to file: {e}")
+
+def parse_arguments(argv=None):
+    """
+    Parses command-line arguments for the key_idea_finder.py script.
+    
+    Args:
+        argv (list[str], optional): A list of command-line arguments. 
+                                    Defaults to None, which means sys.argv[1:] will be used.
+                                    
+    Returns:
+        argparse.Namespace: An object containing the parsed command-line arguments.
+    """
+    parser = argparse.ArgumentParser(
+        prog='key_idea_finder.py', # Sets the program name, used in help messages.
+        description="Extracts key ideas from a book using embeddings and clustering."
+    )
+    # Define the 'book_path' positional argument: path to the input book file.
+    parser.add_argument(
+        "book_path", 
+        type=str, 
+        help="Path to the book file (PDF or TXT)."
+    )
+    # Define the optional '-o' or '--output_file' argument: path for saving results.
+    parser.add_argument(
+        "-o", "--output_file", 
+        type=str, 
+        help="Optional path to save the ranked key ideas (e.g., output.md)."
+        # Default is None if not provided, handled in main_script_logic.
+    )
+    # Parse the arguments. If argv is None, parse_args uses sys.argv[1:].
+    # If argv is provided (e.g., during testing), those arguments are parsed.
+    return parser.parse_args(argv)
 
 # --- Main Execution ---
-if __name__ == "__main__":
-    book_path = input("Enter the path to the book file (PDF or TXT): ")
-
+def main_script_logic(args):
+    """Main logic of the script after parsing arguments."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("\nError: GOOGLE_API_KEY environment variable not set.")
+        print("Error: The GEMINI_API_KEY environment variable is not set.")
+        print("Please set it before running the script.")
         exit(1)
 
-    # 1. Read Book
+    # Use args.book_path instead of input()
+    book_path_arg = args.book_path # Renamed to avoid conflict with global book_path if any
+
+    # 1. Read Book using the utility function
     print("-" * 20)
-    book_text = read_book(book_path)
+    book_text = read_file_content(book_path_arg) # Use the imported function
 
     if book_text:
         # 2. Get Embedding of the Whole Book
         print("-" * 20)
         print("Generating embedding for the entire book...")
-        book_embedding = get_embeddings(book_text, EMBEDDING_MODEL_NAME, api_key)
+        book_embedding = get_embeddings(book_text, EMBEDDING_MODEL, api_key) # Use imported constant
 
         if book_embedding is None:
             print("\nFailed to generate embedding for the whole book. Cannot proceed with ranking.")
@@ -429,7 +400,7 @@ if __name__ == "__main__":
         if text_chunks:
             # 4. Get Embeddings for Chunks
             print("-" * 20)
-            embeddings_array = get_embeddings(text_chunks, EMBEDDING_MODEL_NAME, api_key)
+            embeddings_array = get_embeddings(text_chunks, EMBEDDING_MODEL, api_key) # Use imported constant
 
             if embeddings_array is not None and embeddings_array.shape[0] > 0:
                 # Adjust NUM_CLUSTERS if needed
@@ -452,7 +423,7 @@ if __name__ == "__main__":
                         embeddings_array,
                         text_chunks,
                         api_key,
-                        SUMMARIZATION_MODEL_NAME,
+                        GEMINI_TEXT_MODEL, # Use imported constant
                         num_closest=NUM_CLOSEST_CHUNKS_TO_SUMMARIZE,
                         max_input_len=MAX_SUMMARY_INPUT_LENGTH
                     )
@@ -462,26 +433,47 @@ if __name__ == "__main__":
                         print("-" * 20)
                         ranked_ideas = rank_ideas_by_book_similarity(key_idea_summaries_with_embeddings, book_embedding)
 
-                        # 8. Print Ranked Key Ideas
-                        print("\n" + "=" * 40)
-                        print(f" Ranked Key Ideas by Similarity to Whole Book ")
-                        print("=" * 40)
-                        if ranked_ideas:
-                            for rank, idea_info in enumerate(ranked_ideas):
-                                print(f"\n--- Rank {rank + 1} (Similarity: {idea_info['similarity']:.4f}) ---")
-                                print(idea_info['summary'])
-                                print("-" * 40)
+                        # 8. Output Ranked Key Ideas (Print or Save)
+                        if args.output_file:
+                            save_ranked_ideas_to_file(ranked_ideas, args.output_file)
                         else:
-                            print("\nNo ranked ideas to display (ranking failed or no summaries generated).")
+                            print("\n" + "=" * 40)
+                            print(f" Ranked Key Ideas by Similarity to Whole Book ")
+                            print("=" * 40)
+                            if ranked_ideas:
+                                for rank, idea_info in enumerate(ranked_ideas):
+                                    print(f"\n--- Rank {rank + 1} (Similarity: {idea_info['similarity']:.4f}) ---")
+                                    print(idea_info['summary'])
+                                    print("-" * 40)
+                            else:
+                                print("\nNo ranked ideas to display (ranking failed or no summaries generated).")
                     else:
                         print("\nNo summaries could be generated for the clusters. Cannot rank.")
+                        if args.output_file: # Also save if no summaries, to indicate this
+                            save_ranked_ideas_to_file([], args.output_file)
                 else:
                     print("\nClustering step failed.")
+                    if args.output_file: save_ranked_ideas_to_file([], args.output_file)
             else:
                 print("\nEmbedding generation failed or yielded no results. Cannot proceed.")
+                if args.output_file: save_ranked_ideas_to_file([], args.output_file)
         else:
             print("\nNo valid text chunks found. Cannot proceed.")
+            if args.output_file: save_ranked_ideas_to_file([], args.output_file)
     else:
         print("\nFailed to read/extract text from file. Cannot proceed.")
+        # If book reading failed, and output file is specified, create an empty or error-indicating file.
+        if args.output_file:
+            try:
+                with open(args.output_file, 'w', encoding='utf-8') as f:
+                    f.write("# Key Idea Extraction Failed\n")
+                    f.write("Could not read or extract text from the provided book file.\n")
+                print(f"Output file '{args.output_file}' created with failure message.")
+            except IOError as e:
+                print(f"Error: Could not write failure message to file {args.output_file}. Reason: {e}")
 
     print("\nScript finished.")
+
+if __name__ == "__main__":
+    args = parse_arguments() # Get arguments by calling the new function
+    main_script_logic(args)   # Call the main logic with parsed arguments

@@ -1,0 +1,2 @@
+Este es un ejemplo con caracteres latinos: ñ, é, ç, ü.
+¡Hola, mundo!
